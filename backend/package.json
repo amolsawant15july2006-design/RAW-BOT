@@ -1,0 +1,29 @@
+{
+  "name": "raw-bot-backend",
+  "version": "1.0.0",
+  "description": "Robotic Autonomous Warehouse Bot (RAW BOT) Industrial Backend API & Firebase Bridge",
+  "main": "server.js",
+  "type": "commonjs",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --watch server.js",
+    "test": "node test_api.js"
+  },
+  "dependencies": {
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.5",
+    "express": "^4.19.2",
+    "firebase-admin": "^12.1.0",
+    "jsonwebtoken": "^9.0.2",
+    "morgan": "^1.10.0"
+  },
+  "keywords": [
+    "autonomous-robot",
+    "warehouse",
+    "firebase",
+    "iot",
+    "esp32"
+  ],
+  "author": "RAW BOT Engineering Team",
+  "license": "ISC"
+}
