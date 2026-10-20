@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { useRobot } from '../context/RobotContext';
 import LiveMap from '../components/LiveMap';
+import HardwareBridge from '../components/HardwareBridge';
 import {
   Navigation as NavIcon,
   Play,
@@ -204,6 +205,9 @@ const Navigation = () => {
           />
         </div>
       </div>
+
+      {/* Physical ESP32 Master Teleoperation & 4-Sensor Ultrasonic Radar */}
+      <HardwareBridge />
     </div>
   );
 };

@@ -16,6 +16,7 @@ const alertRoutes = require('./routes/alertRoutes');
 const settingRoutes = require('./routes/settingRoutes');
 const userRoutes = require('./routes/userRoutes');
 const simulationRoutes = require('./routes/simulationRoutes');
+const hardwareRoutes = require('./routes/hardwareRoutes');
 
 const app = express();
 const PORT = process.env.PORT || 5000;
@@ -46,6 +47,7 @@ app.use('/api/alerts', alertRoutes);
 app.use('/api/settings', settingRoutes);
 app.use('/api/users', userRoutes);
 app.use('/api/simulation', simulationRoutes);
+app.use('/api/hardware', hardwareRoutes);
 
 // 404 Handler
 app.use((req, res) => {

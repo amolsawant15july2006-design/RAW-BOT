@@ -78,6 +78,15 @@ export const simulationApi = {
   triggerObstacle: (robotId) => api.post('/simulation/obstacle', { robotId }),
 };
 
+export const hardwareApi = {
+  getStatus: () => api.get('/hardware/status'),
+  setConfig: (config) => api.post('/hardware/config', config),
+  move: (dir) => api.post('/hardware/move', { dir }),
+  emergency: () => api.post('/hardware/emergency'),
+  getDistances: () => api.get('/hardware/distances'),
+  heartbeat: () => api.get('/hardware/heartbeat'),
+};
+
 export const healthApi = {
   check: () => api.get('/health'),
 };
