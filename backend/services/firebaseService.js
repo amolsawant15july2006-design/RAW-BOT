@@ -1,7 +1,28 @@
 const { db, isReal } = require('../config/firebase');
 
+const CLOUD_DB_URL = process.env.FIREBASE_DATABASE_URL ? process.env.FIREBASE_DATABASE_URL.replace(/\/$/, '') : null;
+
+// Background Cloud Sync to Firebase Realtime Database
+async function syncToCloud(path, method, body = null) {
+  if (!CLOUD_DB_URL) return;
+  try {
+    const cleanPath = path.replace(/^\/|\/$/g, '');
+    const url = `${CLOUD_DB_URL}/${cleanPath}.json`;
+    const options = {
+      method,
+      headers: { 'Content-Type': 'application/json' }
+    };
+    if (body !== null && method !== 'GET' && method !== 'DELETE') {
+      options.body = JSON.stringify(body);
+    }
+    await fetch(url, options);
+  } catch (err) {
+    // Silently continue if offline
+  }
+}
+
 const firebaseService = {
-  isRealFirebase: () => isReal,
+  isRealFirebase: () => isReal || Boolean(CLOUD_DB_URL),
 
   async getData(path) {
     if (isReal) {
@@ -18,6 +39,7 @@ const firebaseService = {
     } else {
       await db.set(path, value);
     }
+    syncToCloud(path, 'PUT', value);
     return value;
   },
 
@@ -27,16 +49,20 @@ const firebaseService = {
     } else {
       await db.update(path, updates);
     }
+    syncToCloud(path, 'PATCH', updates);
     return updates;
   },
 
   async pushData(path, item) {
+    let result;
     if (isReal) {
       const ref = await db.ref(path).push(item);
-      return { id: ref.key, ...item };
+      result = { id: ref.key, ...item };
     } else {
-      return await db.push(path, item);
+      result = await db.push(path, item);
     }
+    syncToCloud(path, 'POST', item);
+    return result;
   },
 
   async removeData(path) {
@@ -45,6 +71,7 @@ const firebaseService = {
     } else {
       await db.set(path, null);
     }
+    syncToCloud(path, 'DELETE', null);
     return true;
   },
 
