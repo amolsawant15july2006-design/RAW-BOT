@@ -1,5 +1,7 @@
 #include <WiFi.h>
 #include <WebServer.h>
+#include <HTTPClient.h>
+#include <ArduinoJson.h>
 #include <Wire.h>
 #include <Adafruit_MCP23X17.h>
 
@@ -11,15 +13,18 @@
 // --- WI-FI NETWORK MODE CONFIGURATION ---
 // Option 1: Standalone AP Mode (ESP32 creates its own Wi-Fi: 192.168.4.1)
 // Option 2: Station Mode (ESP32 connects to your Home Router or Phone Hotspot)
-#define USE_WIFI_STATION false   // Change to true to connect to home/mobile Wi-Fi
+#define USE_WIFI_STATION true   // Set to true to connect to your Wi-Fi & Firebase
 
 #if USE_WIFI_STATION
-  const char* ssid = "YOUR_WIFI_SSID";           // Replace with your router SSID
+  const char* ssid = "YOUR_WIFI_SSID";           // Replace with your router SSID or phone hotspot
   const char* password = "YOUR_WIFI_PASSWORD";   // Replace with your router password
 #else
   const char* ssid = "RAW_BOT";
   const char* password = "RawBot1234";
 #endif
+
+// --- FIREBASE CLOUD DATABASE HOST ---
+const char* FIREBASE_HOST = "https://raw-bot-3caa5-default-rtdb.firebaseio.com";
 
 WebServer server(80); 
 Adafruit_MCP23X17 mcp;
@@ -60,16 +65,19 @@ Adafruit_MCP23X17 mcp;
 // ---------------- SETTINGS & TIMERS ----------------
 const float STOP_DISTANCE = 20.0;             // Obstacle halt threshold in cm
 const unsigned long SENSOR_INTERVAL = 100;    // Sensor refresh rate (ms)
-const unsigned long MOVEMENT_TIMEOUT = 1500;  // Auto-stop if browser heartbeat lost (ms)
+const unsigned long MOVEMENT_TIMEOUT = 1800;  // Auto-stop if browser heartbeat lost (ms)
+const unsigned long FIREBASE_SYNC_INTERVAL = 800; // Firebase poll & push rate (ms)
 
 unsigned long lastSensorRead = 0;
 unsigned long lastMovementRefresh = 0;
+unsigned long lastFirebaseSync = 0;
 
 bool mcpReady = false;
 bool emergencyStopped = false;
 bool isMoving = false;
 
 String activeDirection = "S";
+String lastRemoteCommand = "STOP";
 
 float frontDistance = 999.0;
 float backDistance = 999.0;
@@ -147,7 +155,6 @@ float readDistance(int trigPin, int echoPin) {
   unsigned long duration = pulseIn(echoPin, HIGH, 12000);
 
   // FIX: In ultrasonic sensors, 0 duration means no obstacle within 2 meters (CLEAR!)
-  // Returning 999.0 prevents the robot from getting falsely blocked in open space.
   if (duration == 0) return 999.0;
 
   return duration * 0.0343f / 2.0f;
@@ -241,7 +248,59 @@ void enforceObstacleSafety() {
 }
 
 // =====================================================
-// REST API HANDLERS (CONNECTS TO RAW-BOT WEBSITE)
+// FIREBASE CLOUD REALTIME SYNC (BIDIRECTIONAL)
+// =====================================================
+void syncWithFirebaseCloud() {
+  if (WiFi.status() != WL_CONNECTED) return;
+
+  HTTPClient http;
+
+  // 1. Fetch live Command from Firebase (/robot/command.json)
+  String commandUrl = String(FIREBASE_HOST) + "/robot/command.json";
+  http.begin(commandUrl);
+  int code = http.GET();
+  if (code == 200) {
+    String cmd = http.getString();
+    cmd.replace("\"", "");
+    cmd.trim();
+
+    if (cmd != lastRemoteCommand) {
+      lastRemoteCommand = cmd;
+      Serial.println("[FIREBASE COMMAND RECEIVED] -> " + cmd);
+
+      if (cmd == "START" || cmd == "RESUME") {
+        emergencyStopped = false;
+        executeMovement("F");
+      } else if (cmd == "STOP" || cmd == "PAUSE") {
+        stopMotors();
+      } else if (cmd == "EMERGENCY_STOP") {
+        emergencyStopped = true;
+        stopMotors();
+      }
+    }
+  }
+  http.end();
+
+  // 2. Push Ultrasonic Sensor Distances to Firebase (/robots/RBT-01/sensors.json)
+  String sensorUrl = String(FIREBASE_HOST) + "/robots/RBT-01/sensors.json";
+  http.begin(sensorUrl);
+  http.addHeader("Content-Type", "application/json");
+
+  DynamicJsonDocument doc(256);
+  doc["ultrasonic"] = (frontDistance >= 900.0) ? 200.0 : frontDistance;
+  doc["ultrasonicFront"] = frontDistance;
+  doc["ultrasonicBack"]  = backDistance;
+  doc["ultrasonicLeft"]  = leftDistance;
+  doc["ultrasonicRight"] = rightDistance;
+
+  String jsonPayload;
+  serializeJson(doc, jsonPayload);
+  http.PATCH(jsonPayload);
+  http.end();
+}
+
+// =====================================================
+// LOCAL REST API HANDLERS (CONNECTS TO RAW-BOT WEBSITE)
 // =====================================================
 void handleOptions() {
   sendCorsHeaders();
@@ -329,7 +388,7 @@ void handleDistances() {
 
 void handleRoot() {
   sendCorsHeaders();
-  server.send(200, "text/plain", "RAW-BOT ESP32 Master Online. Ready for Web Commands.");
+  server.send(200, "text/plain", "RAW-BOT ESP32 Master Online. Ready for Web & Firebase Commands.");
 }
 
 // =====================================================
@@ -380,13 +439,19 @@ void setup() {
   WiFi.begin(ssid, password);
   Serial.print("[WiFi] Connecting to: ");
   Serial.println(ssid);
-  while (WiFi.status() != WL_CONNECTED) {
+  int tries = 0;
+  while (WiFi.status() != WL_CONNECTED && tries < 25) {
     delay(400);
     Serial.print(".");
+    tries++;
   }
-  Serial.println("\n[WiFi] Connected to Network!");
-  Serial.print("[WiFi] Robot IP Address: http://");
-  Serial.println(WiFi.localIP());
+  if (WiFi.status() == WL_CONNECTED) {
+    Serial.println("\n[WiFi] Connected to Network!");
+    Serial.print("[WiFi] Robot IP Address: http://");
+    Serial.println(WiFi.localIP());
+  } else {
+    Serial.println("\n[WiFi] Could not connect to Wi-Fi. Operating locally.");
+  }
 #else
   WiFi.mode(WIFI_AP);
   WiFi.setSleep(false);
@@ -428,6 +493,12 @@ void loop() {
   if (isMoving && (millis() - lastMovementRefresh > MOVEMENT_TIMEOUT)) {
     Serial.println("[SAFETY] Browser heartbeat timed out. Stopping motors.");
     stopMotors();
+  }
+
+  // Periodic Firebase Cloud Poll & Telemetry Push
+  if (millis() - lastFirebaseSync >= FIREBASE_SYNC_INTERVAL) {
+    lastFirebaseSync = millis();
+    syncWithFirebaseCloud();
   }
 
   delay(1);
